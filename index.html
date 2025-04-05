@@ -3,29 +3,131 @@
 <head>
     <meta charset="UTF-8">
     <title>AR Map with Babylon.js</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body, html { margin: 0; padding: 0; overflow: hidden; }
-        canvas, video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+        body, html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: 'Arial', sans-serif;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            -khtml-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+        canvas, video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
         button {
-            position: absolute; top: 10px; padding: 10px; z-index: 10;
-            background: rgba(0,0,0,0.6); color: #fff; border: none; margin-right: 5px;
+            position: absolute;
+            top: 10px;
+            padding: 12px 16px;
+            z-index: 10;
+            background: rgba(0,0,0,0.6);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            margin-right: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            transition: background-color 0.3s ease, transform 0.2s ease;
+        }
+        button:hover {
+            background-color: rgba(0,0,0,0.8);
+            transform: translateY(-2px);
+        }
+        button:active {
+            background-color: rgba(0,0,0,0.9);
+            transform: translateY(0);
         }
         #enableCamera { left: 10px; }
-        #loadMap { left: 160px; }
-        #switchCamera { left: 310px; }
-        #resetCamera { left: 460px; }
+        #loadMap { left: 180px; }
+        #switchCamera { left: 350px; }
+        #resetCamera { left: 10px; top: 70px; }
         #message {
             position: absolute;
-            bottom: 10px;
-            left: 10px;
+            bottom: 60px;
+            left: 20px;
             background-color: rgba(0, 0, 0, 0.7);
             color: white;
-            padding: 10px;
+            padding: 12px;
             z-index: 10;
+            border-radius: 8px;
+            font-size: 16px;
+            white-space: nowrap;
+        }
+        /* Slider Styles */
+        #elevationSlider {
+            position: absolute;
+            bottom: 10px;
+            left: 20px;
+            z-index: 10;
+            width: 200px;
+        }
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 6px;
             border-radius: 5px;
+            background: #ddd;
+            outline: none;
+            -webkit-transition: .2s;
+            transition: opacity .2s;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #0078d7;
+            cursor: pointer;
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #0078d7;
+            cursor: pointer;
+        }
+        input[type="range"]:focus::-webkit-slider-thumb {
+            box-shadow: 0 0 0 3px rgba(0, 120, 215, 0.3);
+        }
+        input[type="range"]:focus::-moz-range-thumb {
+            box-shadow: 0 0 0 3px rgba(0, 120, 215, 0.3);
+        }
+        /* Styles for small screens (smartphones) */
+        @media screen and (max-width: 768px) {
+            button {
+                font-size: 14px;
+                padding: 10px 14px;
+            }
+            #message {
+                font-size: 14px;
+                padding: 10px;
+                bottom: 50px;
+                left: 10px;
+            }
+            #enableCamera { left: 10px; top: 10px; }
+            #loadMap { left: 10px; top: 60px; }
+            #switchCamera { left: 10px; top: 110px; }
+            #resetCamera { left: 10px; top: 160px; }
+            #elevationSlider {
+                width: 90%;
+                left: 5%;
+            }
         }
     </style>
     <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <script src="https://cdn.babylonjs.com/loaders/babylon.js"></script>
 </head>
 <body>
     <button id="enableCamera">Enable Camera</button>
@@ -35,11 +137,13 @@
     <video id="videoFeed" autoplay muted playsinline></video>
     <canvas id="renderCanvas"></canvas>
     <div id="message">Loading...</div>
+    <input type="range" id="elevationSlider" min="-2" max="2" value="0" step="0.01">
 
     <script>
         const canvas = document.getElementById("renderCanvas");
         const videoFeed = document.getElementById('videoFeed');
         const messageElement = document.getElementById('message');
+        const elevationSlider = document.getElementById('elevationSlider');
 
         const engine = new BABYLON.Engine(canvas, true, { alpha: true });
         const scene = new BABYLON.Scene(engine);
@@ -49,7 +153,11 @@
         const camera = new BABYLON.ArcRotateCamera("camera", -Math.PI / 2, Math.PI / 3, initialCameraPosition.length(), new BABYLON.Vector3(0, 0, 0));
         camera.attachControl(canvas, true);
         camera.lowerRadiusLimit = 1;
-        camera.upperRadiusLimit = 20;
+        camera.upperRadiusLimit = 50;
+        camera.wheelPrecision = 2;
+        camera.angularSensibility = 500;
+        camera.pinchPrecision = 50;
+        camera.panningSensibility = 50;
 
         const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0, 1, 0), scene);
 
@@ -64,6 +172,12 @@
         const tileZoom = 16;
         const tileSize = 1;
         const renderRadius = 2;
+        let planeHeight = 0;
+        let plane;
+        let loadingTiles = 0;
+        let elevationFactor = 0;
+        const maxRetries = 3;
+        const retryDelay = 2000; // Increased delay
 
         function showMessage(text) {
             messageElement.textContent = text;
@@ -100,15 +214,31 @@
             camera.beta = Math.PI / 3;
             camera.radius = initialCameraPosition.length();
             camera.target.set(0, 0, 0);
+            planeHeight = 0;
+            if (plane) {
+                plane.position.y = planeHeight;
+            }
+            camera.setTarget(new BABYLON.Vector3(0, planeHeight, 0));
+            elevationSlider.value = elevationFactor;
+            mapTiles.forEach(tile => tile.dispose());
+            mapTiles = [];
         };
 
         function latLonToTileXY(latitude, longitude, zoom) {
-            const lat_rad = latitude * Math.PI / 180;
-            const n = Math.pow(2, zoom);
-            const xTile = Math.floor((longitude + 180.0) / 360.0 * n);
-            const yTile = Math.floor((1.0 - Math.log(Math.tan(lat_rad) + 1.0 / Math.cos(lat_rad)) / Math.PI) / 2.0 * n);
-            return { x: xTile, y: yTile };
-        }
+          const lat_rad = latitude * Math.PI / 180;
+          const n = Math.pow(2, zoom);
+          let xTile = Math.floor((longitude + 180.0) / 360.0 * n);
+          let yTile = Math.floor((1.0 - Math.log(Math.tan(lat_rad) + 1.0 / Math.cos(lat_rad)) / 2.0 * n));
+      
+           // Correct negative tile coordinates
+          if (xTile < 0) {
+              xTile = 0;
+          }
+          if (yTile < 0) {
+              yTile = 0;
+          }
+          return { x: xTile, y: yTile };
+      }
 
         function tileXYToLatLon(xTile, yTile, zoom) {
             const n = Math.pow(2, zoom);
@@ -124,24 +254,80 @@
 
             const centerTile = latLonToTileXY(latitude, longitude, tileZoom);
 
-            scene.meshes.forEach(mesh => { if (mesh.name.startsWith("tile")) mesh.dispose(); });
+            mapTiles.forEach(tile => tile.dispose());
+            mapTiles = [];
+            loadingTiles = 0;
+
+            if (!plane) {
+                plane = BABYLON.MeshBuilder.CreatePlane("tilePlane", { width: tileSize * (2 * renderRadius + 1), height: tileSize * (2 * renderRadius + 1) }, scene);
+                plane.rotation.x = Math.PI / 2;
+                plane.position.y = planeHeight;
+            }
+
+            let tilesLoaded = 0;
+            const totalTiles = (2 * renderRadius + 1) * (2 * renderRadius + 1);
+            showMessage(`Loading tiles: ${tilesLoaded}/${totalTiles}`);
 
             for (let i = -renderRadius; i <= renderRadius; i++) {
                 for (let j = -renderRadius; j <= renderRadius; j++) {
                     const x = centerTile.x + i;
                     const y = centerTile.y + j;
                     const tileUrl = `https://tile.openstreetmap.org/${tileZoom}/${x}/${y}.png`;
+                    let retries = 0;
 
-                    const texture = new BABYLON.Texture(tileUrl, scene, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, {
-                        samplingMode: BABYLON.Texture.TRILINEAR_SAMPLINGMODE
-                    });
-                    const tile = BABYLON.MeshBuilder.CreateGround(`tile_${x}_${y}`, { width: tileSize, height: tileSize }, scene);
-                    tile.position.set((i * tileSize), 0, (-j * tileSize));
+                    const loadTexture = () => {
+                        const img = new Image();
+                        img.crossOrigin = "anonymous";
 
-                    const mat = new BABYLON.StandardMaterial("tileMat", scene);
-                    mat.diffuseTexture = texture;
-                    mat.backFaceCulling = false;
-                    tile.material = mat;
+                        img.onload = () => {
+                            const texture = new BABYLON.Texture(img, scene, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, {
+                                samplingMode: BABYLON.Texture.TRILINEAR_SAMPLINGMODE
+                            });
+
+                            tilesLoaded++;
+                            showMessage(`Loading tiles: ${tilesLoaded}/${totalTiles}`);
+                            if (tilesLoaded === totalTiles) {
+                                clearMessage();
+                            }
+
+                            const tile = BABYLON.MeshBuilder.CreateGround(`tile_${x}_${y}`, { width: tileSize, height: tileSize, subdivisions: 1 }, scene);
+                            tile.position.set((i * tileSize), planeHeight, (-j * tileSize));
+
+                            const mat = new BABYLON.StandardMaterial("tileMat", scene);
+                            mat.diffuseTexture = texture;
+                            mat.backFaceCulling = false;
+                            tile.material = mat;
+                            mapTiles.push(tile);
+
+                            const positions = tile.getVerticesData(BABYLON.VertexBuffer.PositionKind);
+                            if (positions) {
+                                for (let vertexIndex = 0; vertexIndex < positions.length / 3; vertexIndex++) {
+                                    const yOffset = Math.random() * elevationFactor;
+                                    positions[vertexIndex * 3 + 1] += yOffset;
+                                }
+                                tile.updateVerticesData(BABYLON.VertexBuffer.PositionKind, positions);
+                            }
+                        };
+
+                        img.onerror = () => {
+                            if (retries < maxRetries) {
+                                retries++;
+                                console.warn(`Failed to load texture: ${tileUrl}. Retry attempt: ${retries}/${maxRetries}`);
+                                setTimeout(loadTexture, retryDelay); // Use setTimeout for delayed retry
+                            } else {
+                                console.error(`Failed to load texture: ${tileUrl} after ${maxRetries} attempts.`);
+                                tilesLoaded++;
+                                showMessage(`Failed to load tile: ${x},${y}`);
+                                if (tilesLoaded === totalTiles) {
+                                    clearMessage();
+                                }
+                            }
+                        };
+
+                        img.src = tileUrl;
+                    };
+
+                    loadTexture();
                 }
             }
 
@@ -151,18 +337,27 @@
                 markerMat.diffuseColor = BABYLON.Color3.Red();
                 positionMarker.material = markerMat;
             }
-            positionMarker.position.set(0, 0.1, 0);
+            positionMarker.position.set(0, planeHeight + 0.1, 0);
+            camera.setTarget(new BABYLON.Vector3(0, planeHeight, 0));
         }
 
         document.getElementById('loadMap').onclick = () => {
+            mapLoaded = true;
+            showMessage("Loading map...");
+
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(
                     pos => {
-                        loadTiles(pos.coords.latitude, pos.coords.longitude);
-                        if (watchPositionId) navigator.geolocation.clearWatch(watchPositionId);
+                        const { latitude, longitude } = pos.coords;
+                        currentLatitude = latitude;
+                        currentLongitude = longitude;
+                        loadTiles(latitude, longitude);
+
                         watchPositionId = navigator.geolocation.watchPosition(
                             pos => {
-                                loadTiles(pos.coords.latitude, pos.coords.longitude);
+                                currentLatitude = pos.coords.latitude;
+                                currentLongitude = pos.coords.longitude;
+                                loadTiles(currentLatitude, currentLongitude);
                             },
                             err => {
                                 handleLocationError(err);
@@ -170,10 +365,14 @@
                             { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
                         );
                     },
-                    err => {
-                        handleLocationError(err);
+                    error => {
+                        handleLocationError(error);
                     },
-                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                        maximumAge: 5000
+                    }
                 );
             } else {
                 showMessage("Geolocation is not supported by your browser.");
@@ -197,6 +396,21 @@
             }
             console.error("Geolocation error:", error);
         }
+
+        // Slider event listener
+        elevationSlider.addEventListener('input', () => {
+            elevationFactor = parseFloat(elevationSlider.value);
+            mapTiles.forEach(tile => {
+                const positions = tile.getVerticesData(BABYLON.VertexBuffer.PositionKind);
+                if (positions) {
+                    for (let vertexIndex = 0; vertexIndex < positions.length / 3; vertexIndex++) {
+                        const yOffset = Math.random() * elevationFactor;
+                        positions[vertexIndex * 3 + 1] += yOffset;
+                    }
+                    tile.updateVerticesData(BABYLON.VertexBuffer.PositionKind, positions);
+                }
+            });
+        });
 
         engine.runRenderLoop(() => {
             scene.render();

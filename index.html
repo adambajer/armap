@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AR Map with Babylon.js</title>
+    <style>
+        body, html { margin: 0; padding: 0; overflow: hidden; }
+        canvas, video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+        button {
+            position: absolute; top: 10px; padding: 10px; z-index: 10;
+            background: rgba(0,0,0,0.6); color: #fff; border: none; margin-right: 5px;
+        }
+        #enableCamera { left: 10px; }
+        #loadMap { left: 160px; }
+        #switchCamera { left: 310px; }
+        #resetCamera { left: 460px; }
+        #message {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            z-index: 10;
+            border-radius: 5px;
+        }
+    </style>
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+</head>
+<body>
+    <button id="enableCamera">Enable Camera</button>
+    <button id="loadMap">Load Map (GPS)</button>
+    <button id="switchCamera">Switch Camera</button>
+    <button id="resetCamera">Reset Camera</button>
+    <video id="videoFeed" autoplay muted playsinline></video>
+    <canvas id="renderCanvas"></canvas>
+    <div id="message">Loading...</div>
+
+    <script>
+        const canvas = document.getElementById("renderCanvas");
+        const videoFeed = document.getElementById('videoFeed');
+        const messageElement = document.getElementById('message');
+
+        const engine = new BABYLON.Engine(canvas, true, { alpha: true });
+        const scene = new BABYLON.Scene(engine);
+        scene.clearColor = new BABYLON.Color4(0, 0, 0, 0);
+
+        const initialCameraPosition = new BABYLON.Vector3(0, 1, -5);
+        const camera = new BABYLON.ArcRotateCamera("camera", -Math.PI / 2, Math.PI / 3, initialCameraPosition.length(), new BABYLON.Vector3(0, 0, 0));
+        camera.attachControl(canvas, true);
+        camera.lowerRadiusLimit = 1;
+        camera.upperRadiusLimit = 20;
+
+        const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0, 1, 0), scene);
+
+        let currentStream;
+        let currentFacingMode = "environment";
+        let currentLatitude;
+        let currentLongitude;
+        let mapLoaded = false;
+        let mapTiles = [];
+        let positionMarker;
+        let watchPositionId;
+        const tileZoom = 16;
+        const tileSize = 1;
+        const renderRadius = 2;
+
+        function showMessage(text) {
+            messageElement.textContent = text;
+        }
+
+        function clearMessage() {
+            messageElement.textContent = '';
+        }
+
+        async function startCamera(facingMode) {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+            try {
+                currentStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
+                videoFeed.srcObject = currentStream;
+            } catch (e) {
+                console.error("Error accessing camera:", e);
+                showMessage("Camera access denied. Please allow camera access and reload.");
+            }
+        }
+
+        document.getElementById('enableCamera').onclick = async () => {
+            await startCamera(currentFacingMode);
+        };
+
+        document.getElementById('switchCamera').onclick = async () => {
+            currentFacingMode = currentFacingMode === "environment" ? "user" : "environment";
+            await startCamera(currentFacingMode);
+        };
+
+        document.getElementById('resetCamera').onclick = () => {
+            camera.alpha = -Math.PI / 2;
+            camera.beta = Math.PI / 3;
+            camera.radius = initialCameraPosition.length();
+            camera.target.set(0, 0, 0);
+        };
+
+        function latLonToTileXY(latitude, longitude, zoom) {
+            const lat_rad = latitude * Math.PI / 180;
+            const n = Math.pow(2, zoom);
+            const xTile = Math.floor((longitude + 180.0) / 360.0 * n);
+            const yTile = Math.floor((1.0 - Math.log(Math.tan(lat_rad) + 1.0 / Math.cos(lat_rad)) / Math.PI) / 2.0 * n);
+            return { x: xTile, y: yTile };
+        }
+
+        function tileXYToLatLon(xTile, yTile, zoom) {
+            const n = Math.pow(2, zoom);
+            const lon_deg = xTile / n * 360.0 - 180.0;
+            const lat_rad = Math.atan(Math.sinh(Math.PI * (1.0 - 2.0 * yTile / n)));
+            const lat_deg = lat_rad * 180.0 / Math.PI;
+            return { latitude: lat_deg, longitude: lon_deg };
+        }
+
+        function loadTiles(latitude, longitude) {
+            currentLatitude = latitude;
+            currentLongitude = longitude;
+
+            const centerTile = latLonToTileXY(latitude, longitude, tileZoom);
+
+            scene.meshes.forEach(mesh => { if (mesh.name.startsWith("tile")) mesh.dispose(); });
+
+            for (let i = -renderRadius; i <= renderRadius; i++) {
+                for (let j = -renderRadius; j <= renderRadius; j++) {
+                    const x = centerTile.x + i;
+                    const y = centerTile.y + j;
+                    const tileUrl = `https://tile.openstreetmap.org/${tileZoom}/${x}/${y}.png`;
+
+                    const texture = new BABYLON.Texture(tileUrl, scene, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, {
+                        samplingMode: BABYLON.Texture.TRILINEAR_SAMPLINGMODE
+                    });
+                    const tile = BABYLON.MeshBuilder.CreateGround(`tile_${x}_${y}`, { width: tileSize, height: tileSize }, scene);
+                    tile.position.set((i * tileSize), 0, (-j * tileSize));
+
+                    const mat = new BABYLON.StandardMaterial("tileMat", scene);
+                    mat.diffuseTexture = texture;
+                    mat.backFaceCulling = false;
+                    tile.material = mat;
+                }
+            }
+
+            if (!positionMarker) {
+                positionMarker = BABYLON.MeshBuilder.CreateSphere("marker", { diameter: 0.1 }, scene);
+                const markerMat = new BABYLON.StandardMaterial("markerMat", scene);
+                markerMat.diffuseColor = BABYLON.Color3.Red();
+                positionMarker.material = markerMat;
+            }
+            positionMarker.position.set(0, 0.1, 0);
+        }
+
+        document.getElementById('loadMap').onclick = () => {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    pos => {
+                        loadTiles(pos.coords.latitude, pos.coords.longitude);
+                        if (watchPositionId) navigator.geolocation.clearWatch(watchPositionId);
+                        watchPositionId = navigator.geolocation.watchPosition(
+                            pos => {
+                                loadTiles(pos.coords.latitude, pos.coords.longitude);
+                            },
+                            err => {
+                                handleLocationError(err);
+                            },
+                            { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+                        );
+                    },
+                    err => {
+                        handleLocationError(err);
+                    },
+                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+                );
+            } else {
+                showMessage("Geolocation is not supported by your browser.");
+            }
+        };
+
+        function handleLocationError(error) {
+            switch (error.code) {
+                case error.PERMISSION_DENIED:
+                    showMessage("User denied geolocation permission. Please allow location access to use the map.");
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    showMessage("Location information is unavailable. Please check your network connection and GPS settings.");
+                    break;
+                case error.TIMEOUT:
+                    showMessage("Timeout expired while trying to retrieve your location. Please ensure your GPS is active and you have a clear view of the sky.");
+                    break;
+                case error.UNKNOWN_ERROR:
+                    showMessage("An unknown error occurred while retrieving location.");
+                    break;
+            }
+            console.error("Geolocation error:", error);
+        }
+
+        engine.runRenderLoop(() => {
+            scene.render();
+        });
+
+        window.addEventListener("resize", () => engine.resize());
+
+        window.addEventListener('beforeunload', () => {
+            if (watchPositionId) {
+                navigator.geolocation.clearWatch(watchPositionId);
+            }
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+        });
+    </script>
+</body>
+</html>

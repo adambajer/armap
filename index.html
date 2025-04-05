@@ -225,20 +225,20 @@
         };
 
         function latLonToTileXY(latitude, longitude, zoom) {
-          const lat_rad = latitude * Math.PI / 180;
-          const n = Math.pow(2, zoom);
-          let xTile = Math.floor((longitude + 180.0) / 360.0 * n);
-          let yTile = Math.floor((1.0 - Math.log(Math.tan(lat_rad) + 1.0 / Math.cos(lat_rad)) / 2.0 * n));
-      
-           // Correct negative tile coordinates
-          if (xTile < 0) {
-              xTile = 0;
-          }
-          if (yTile < 0) {
-              yTile = 0;
-          }
-          return { x: xTile, y: yTile };
-      }
+            const lat_rad = latitude * Math.PI / 180;
+            const n = Math.pow(2, zoom);
+            let xTile = Math.floor((longitude + 180.0) / 360.0 * n);
+            let yTile = Math.floor((1.0 - Math.log(Math.tan(lat_rad) + 1.0 / Math.cos(lat_rad)) / 2.0 * n));
+
+             // Correct negative tile coordinates
+            if (xTile < 0) {
+                xTile = 0;
+            }
+            if (yTile < 0) {
+                yTile = 0;
+            }
+            return { x: xTile, y: yTile };
+        }
 
         function tileXYToLatLon(xTile, yTile, zoom) {
             const n = Math.pow(2, zoom);
@@ -280,32 +280,41 @@
                         img.crossOrigin = "anonymous";
 
                         img.onload = () => {
-                            const texture = new BABYLON.Texture(img, scene, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, {
-                                samplingMode: BABYLON.Texture.TRILINEAR_SAMPLINGMODE
-                            });
+                            try {
+                                const texture = new BABYLON.Texture(img, scene, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, {
+                                    samplingMode: BABYLON.Texture.TRILINEAR_SAMPLINGMODE
+                                });
 
-                            tilesLoaded++;
-                            showMessage(`Loading tiles: ${tilesLoaded}/${totalTiles}`);
-                            if (tilesLoaded === totalTiles) {
-                                clearMessage();
-                            }
-
-                            const tile = BABYLON.MeshBuilder.CreateGround(`tile_${x}_${y}`, { width: tileSize, height: tileSize, subdivisions: 1 }, scene);
-                            tile.position.set((i * tileSize), planeHeight, (-j * tileSize));
-
-                            const mat = new BABYLON.StandardMaterial("tileMat", scene);
-                            mat.diffuseTexture = texture;
-                            mat.backFaceCulling = false;
-                            tile.material = mat;
-                            mapTiles.push(tile);
-
-                            const positions = tile.getVerticesData(BABYLON.VertexBuffer.PositionKind);
-                            if (positions) {
-                                for (let vertexIndex = 0; vertexIndex < positions.length / 3; vertexIndex++) {
-                                    const yOffset = Math.random() * elevationFactor;
-                                    positions[vertexIndex * 3 + 1] += yOffset;
+                                tilesLoaded++;
+                                showMessage(`Loading tiles: ${tilesLoaded}/${totalTiles}`);
+                                if (tilesLoaded === totalTiles) {
+                                    clearMessage();
                                 }
-                                tile.updateVerticesData(BABYLON.VertexBuffer.PositionKind, positions);
+
+                                const tile = BABYLON.MeshBuilder.CreateGround(`tile_${x}_${y}`, { width: tileSize, height: tileSize, subdivisions: 1 }, scene);
+                                tile.position.set((i * tileSize), planeHeight, (-j * tileSize));
+
+                                const mat = new BABYLON.StandardMaterial("tileMat", scene);
+                                mat.diffuseTexture = texture;
+                                mat.backFaceCulling = false;
+                                tile.material = mat;
+                                mapTiles.push(tile);
+
+                                const positions = tile.getVerticesData(BABYLON.VertexBuffer.PositionKind);
+                                if (positions) {
+                                    for (let vertexIndex = 0; vertexIndex < positions.length / 3; vertexIndex++) {
+                                        const yOffset = Math.random() * elevationFactor;
+                                        positions[vertexIndex * 3 + 1] += yOffset;
+                                    }
+                                    tile.updateVerticesData(BABYLON.VertexBuffer.PositionKind, positions);
+                                }
+                            } catch (error) {
+                                console.error("Error creating texture:", error);
+                                tilesLoaded++;
+                                showMessage(`Failed to load tile: ${x},${y}`);
+                                if (tilesLoaded === totalTiles) {
+                                    clearMessage();
+                                }
                             }
                         };
 
